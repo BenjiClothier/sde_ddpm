@@ -2,3 +2,7 @@ __pycache__/
 unet/__pycache__/
 data/
 checkpoints/
+*.pt
+samples/
+debug.py
+debug2.py
