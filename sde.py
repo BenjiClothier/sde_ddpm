@@ -9,6 +9,7 @@ class SubVPSDE:
         self.beta_0 = config['beta_min']
         self.beta_T = config['beta_max']
         self.N = config['timesteps']
+        self.ODE = config['ODE']
     
     @property
     def T(self):
@@ -31,6 +32,12 @@ class SubVPSDE:
     def prior_sampling(self, shape):
         return torch.randn(*shape)
     
+    def prior_logp(self, z):
+        shape = z.shape
+        N = np.prod(shape[1:])
+        logps = -N / 2. * np.log(2 * np.pi) - torch.sum(z ** 2, dim=(1, 2, 3)) / 2.
+        return logps
+    
     def discretize(self, x, t):
         dt = 1 / self.N
         drift, diffusion = self.sde(x, t)
@@ -41,13 +48,14 @@ class SubVPSDE:
     def reverse_sde(self, score_fn, x, t):
         drift, diffusion = self.sde(x, t)
         score = score_fn(x, t)
-        drift = drift - diffusion[:, None, None, None] ** 2 * score
+        drift = drift - diffusion[:, None, None, None] ** 2 * score * (0.5 if self.ODE else 1.)
+        diffusion = 0 if self.ODE else diffusion
         return drift, diffusion
 
     def reverse_discretize(self, score_fn, x, t):
         f, G = self.discretize(x, t)
-        rev_f = f - G[: None, None, None] ** 2 * 2 * score_fn(x, t)
-        rev_G = G
+        rev_f = f - G[: None, None, None] ** 2 * 2 * score_fn(x, t) * (0.5 if self.ODE else 1.)
+        rev_G = torch.zero_like(G) if self.ODE else G
         return rev_f, rev_G
 
 
@@ -67,11 +75,13 @@ class EulerMaruayamaPredictor:
         z = torch.randn_like(x)
         drift, diffusion = sde.reverse_sde(score_fn, x, t)
         x_mean = x + drift * dt
+        if sde.ODE == True:
+            return x_mean, x_mean
         x = x_mean + diffusion[:, None, None, None] * np.sqrt(-dt) * z
         return x, x_mean
     
 @torch.no_grad()
-def sample_images(sde, score_fn, shape, eps = 1e-3, device = 'cuda', 
+def sample_images(sde, score_fn, shape, device, eps = 1e-3, 
                   predictor: EulerMaruayamaPredictor = None):
     assert predictor is not None
 
@@ -83,3 +93,4 @@ def sample_images(sde, score_fn, shape, eps = 1e-3, device = 'cuda',
         x, x_mean = predictor.update_fn(sde, score_fn, x, t)
     
     return x_mean # Still in [-1, 1]
+

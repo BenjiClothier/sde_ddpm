@@ -6,6 +6,7 @@ import torch
 from sde import SubVPSDE, get_score_fn, EulerMaruayamaPredictor, sample_images
 from unet import Unet
 from utils import get_loaders, make_im_grid
+from datasets import get_dataset
 
 torch.manual_seed(159753)
 np.random.seed(159753)
@@ -35,16 +36,20 @@ if __name__ == '__main__':
         'beta_min': 0.1,
         'beta_max': 20.0,
         'timesteps': 1000,
-        'lr': 2e-4,
+        'lr': 8e-5,
         'warmup': 5000,
-        'batch_size': 128,
-        'epochs': 100,
+        'batch_size': 256,
+        'epochs': 200,
         'log_freq': 100,
         'num_workers': 2,
-        'use_ema': True
+        'use_ema': True,
+        'ODE' : False,
+        'dequant' : False,
+        'data.dataset' : 'MNIST',
+        'uniform_dequantization' : False
     }
     
-    device = 'cuda'
+    device = 'cuda:0'
 
     model = Unet().to(device)
 
@@ -57,7 +62,7 @@ if __name__ == '__main__':
     sampler = EulerMaruayamaPredictor()
 
     optim = torch.optim.Adam(model.parameters(), lr=config['lr'])
-    train_loader, _ = get_loaders(config)
+    train_loader, _, info = get_dataset(config, uniform_dequantization=True, evaluation=False)
     loss_fn = get_loss_fn(sde)
 
     step = 0
@@ -85,13 +90,16 @@ if __name__ == '__main__':
             step += 1
         
         model.eval()
-        with torch.no_grad():
-            print(f'Generating samples at epoch {epoch}')
-            score_model = model if not config['use_ema'] else ema_model
-            score_fn = get_score_fn(sde, score_model)
-            gen_x = sample_images(sde, score_fn, (64, 3, 32, 32), predictor=sampler)
-            image = make_im_grid(gen_x, (8, 8))
-            image.save(f'samples/{epoch}.png')
+        if (epoch + 1) % 20 == 0:
+            with torch.no_grad():
+                print(f'Generating samples at epoch {epoch}')
+                score_model = model if not config['use_ema'] else ema_model
+                score_fn = get_score_fn(sde, score_model)
+                gen_x = sample_images(sde, score_fn, (64, 3, 32, 32), predictor=sampler, device=device)
+                image = make_im_grid(gen_x, (8, 8))
+                image.save(f'samples/{epoch}.png')
+            torch.save(model, f'checkpoints/check_{epoch + 1}')
+            torch.save(ema_model.state_dict(), f'checkpoints/ema_chk_{epoch + 1}')
     
     torch.save(model, 'unet.pt')
     torch.save(ema_model.state_dict(), 'ema_sd.pt')
