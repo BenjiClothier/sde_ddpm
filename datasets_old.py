@@ -4,7 +4,6 @@ from torch.utils.data import DataLoader, Dataset
 import torchvision
 import torchvision.transforms as transforms
 from torchvision.datasets import CIFAR10, MNIST
-import numpy as np
 
 class SingleDigitMNIST(Dataset):
     """Custom Dataset class for single digit MNIST"""
@@ -155,8 +154,7 @@ class AnomalousMNIST(Dataset):
             sample = sample.unsqueeze(0)  # Add channel dimension
         
         return sample, target
-
-
+    
 def get_dataset(config, uniform_dequantization=False, evaluation=False):
     """Create data loaders for training and evaluation.
 
@@ -166,10 +164,7 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
             - eval.batch_size: batch size for evaluation  
             - data.image_size or image_size: target image size
             - data.random_flip or random_flip: whether to apply random horizontal flip
-            - data.dataset or dataset: dataset name ('CIFAR10', 'MNIST', 'ANOMALOUS_MNIST', 'SINGLE_DIGIT_MNIST')
-            - data.target_digit: digit to make anomalous or specific digit to include
-            - data.removal_percentage: percentage of target digit to remove (for ANOMALOUS_MNIST)
-            - data.random_state: random seed for anomaly creation
+            - data.dataset or dataset: dataset name ('CIFAR10' or 'MNIST')
         uniform_dequantization: If True, add uniform dequantization to images.
         evaluation: If True, use evaluation batch size and disable shuffling.
 
@@ -210,26 +205,10 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
     else:
         random_flip = config.get('data.random_flip', config.get('random_flip', True))
 
-    # Get dataset-specific parameters
-    if hasattr(config, 'data') and hasattr(config.data, 'target_digit'):
-        target_digit = config.data.target_digit
-    else:
-        target_digit = config.get('data.target_digit', config.get('target_digit', 8))
-    
-    if hasattr(config, 'data') and hasattr(config.data, 'removal_percentage'):
-        removal_percentage = config.data.removal_percentage
-    else:
-        removal_percentage = config.get('data.removal_percentage', config.get('removal_percentage', 0.98))
-    
-    if hasattr(config, 'data') and hasattr(config.data, 'random_state'):
-        random_state = config.data.random_state
-    else:
-        random_state = config.get('data.random_state', config.get('random_state', 42))
-
     # Create transforms based on dataset
     transform_list = []
     
-    if dataset_name in ['MNIST', 'ANOMALOUS_MNIST', 'SINGLE_DIGIT_MNIST']:
+    if dataset_name == 'MNIST':
         # MNIST-specific transforms
         # Resize for U-Net
         transform_list.append(transforms.Resize((32, 32)))
@@ -250,7 +229,7 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
         transform_list.append(transforms.ToTensor())
     
     else:
-        raise ValueError(f"Unsupported dataset: {dataset_name}. Supported: 'CIFAR10', 'MNIST', 'ANOMALOUS_MNIST', 'SINGLE_DIGIT_MNIST'")
+        raise ValueError(f"Unsupported dataset: {dataset_name}. Supported: 'CIFAR10', 'MNIST'")
     
     # Random flip for training (apply to both datasets)
     train_transform_list = transform_list.copy()
@@ -307,46 +286,6 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
         
         num_classes = 10
         class_names = [str(i) for i in range(10)]  # MNIST classes are 0-9
-        
-    elif dataset_name == 'ANOMALOUS_MNIST':
-        train_dataset = AnomalousMNIST(
-            root='./data', 
-            train=True, 
-            target_digit=target_digit,
-            removal_percentage=removal_percentage,
-            transform=train_transform,
-            random_state=random_state
-        )
-        
-        eval_dataset = AnomalousMNIST(
-            root='./data', 
-            train=False, 
-            target_digit=target_digit,
-            removal_percentage=removal_percentage,
-            transform=eval_transform,
-            random_state=random_state
-        )
-        
-        num_classes = 10
-        class_names = train_dataset.classes
-        
-    elif dataset_name == 'SINGLE_DIGIT_MNIST':
-        train_dataset = SingleDigitMNIST(
-            root='./data', 
-            train=True, 
-            target_digit=target_digit,
-            transform=train_transform
-        )
-        
-        eval_dataset = SingleDigitMNIST(
-            root='./data', 
-            train=False, 
-            target_digit=target_digit,
-            transform=eval_transform
-        )
-        
-        num_classes = 10
-        class_names = train_dataset.classes
 
     # Create data loaders
     train_loader = DataLoader(
@@ -376,25 +315,6 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
         'eval_size': len(eval_dataset),
         'class_names': class_names
     }
-    
-    # Add dataset-specific info
-    if dataset_name == 'ANOMALOUS_MNIST':
-        anomaly_train_count = np.sum(train_dataset.targets == target_digit)
-        anomaly_test_count = np.sum(eval_dataset.targets == target_digit)
-        dataset_info.update({
-            'target_digit': target_digit,
-            'removal_percentage': removal_percentage,
-            'anomaly_train_count': anomaly_train_count,
-            'anomaly_test_count': anomaly_test_count,
-            'normal_train_count': len(train_dataset) - anomaly_train_count,
-            'normal_test_count': len(eval_dataset) - anomaly_test_count
-        })
-    elif dataset_name == 'SINGLE_DIGIT_MNIST':
-        dataset_info.update({
-            'target_digit': target_digit,
-            'digit_train_count': len(train_dataset),
-            'digit_test_count': len(eval_dataset)
-        })
 
     return train_loader, eval_loader, dataset_info
 
@@ -445,32 +365,9 @@ if __name__ == "__main__":
         'data.random_flip': False  # Usually False for MNIST
     }
     
-    # Single digit config
-    single_digit_config = {
-        'beta_min': 0.1,
-        'beta_max': 20.0,
-        'timesteps': 1000,
-        'lr': 2e-4,
-        'warmup': 5000,
-        'batch_size': 128,
-        'epochs': 100,
-        'log_freq': 100,
-        'num_workers': 2,
-        'use_ema': True,
-        'ODE': True,
-        'dequant': True,
-        # Dataset specific keys:
-        'training.batch_size': 128,
-        'eval.batch_size': 256,
-        'data.dataset': 'SINGLE_DIGIT_MNIST',
-        'data.target_digit': 8,  # Only digit 8
-        'data.image_size': 32,
-        'data.random_flip': False
-    }
-    
-    # Test SINGLE_DIGIT_MNIST
-    print("=== SINGLE_DIGIT_MNIST ===")
-    train_loader, eval_loader, dataset_info = get_dataset(single_digit_config, uniform_dequantization=single_digit_config['dequant'], evaluation=False)
+    # Test CIFAR-10
+    print("=== CIFAR-10 ===")
+    train_loader, eval_loader, dataset_info = get_dataset(cifar_config, uniform_dequantization=cifar_config['dequant'], evaluation=False)
     
     print(f"Dataset info: {dataset_info}")
     print(f"Training batches: {len(train_loader)}")
@@ -478,7 +375,21 @@ if __name__ == "__main__":
     
     # Test loading a batch
     for batch_idx, (images, labels) in enumerate(train_loader):
-        print(f"Single Digit Batch {batch_idx}: images shape {images.shape}, labels shape {labels.shape}")
+        print(f"CIFAR-10 Batch {batch_idx}: images shape {images.shape}, labels shape {labels.shape}")
         print(f"Image range: [{images.min():.3f}, {images.max():.3f}]")
-        print(f"All labels are {single_digit_config['data.target_digit']}: {torch.all(labels == single_digit_config['data.target_digit']).item()}")
+        break
+    
+    # Test MNIST
+    print("\n=== MNIST ===")
+    train_loader, eval_loader, dataset_info = get_dataset(mnist_config, uniform_dequantization=mnist_config['dequant'], evaluation=False)
+    
+    print(f"Dataset info: {dataset_info}")
+    print(f"Training batches: {len(train_loader)}")
+    print(f"Evaluation batches: {len(eval_loader)}")
+    
+    # Test loading a batch
+    for batch_idx, (images, labels) in enumerate(train_loader):
+        print(f"MNIST Batch {batch_idx}: images shape {images.shape}, labels shape {labels.shape}")
+        print(f"Image range: [{images.min():.3f}, {images.max():.3f}]")
+        print(f"Sample labels: {labels[:5].tolist()}")
         break

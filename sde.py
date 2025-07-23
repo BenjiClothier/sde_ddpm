@@ -58,6 +58,12 @@ class SubVPSDE:
         rev_G = torch.zero_like(G) if self.ODE else G
         return rev_f, rev_G
 
+    def fwd_ODE(self, score_fn, x, t):
+        drift, diffusion = self.sde(x, t)
+        score = score_fn(x, t)
+        drift = -drift + diffusion[:, None, None, None] ** 2 * score * 0.5
+        return drift, 0
+
 
 def get_score_fn(sde: SubVPSDE, model: Unet):
     def score_fn(x, t):

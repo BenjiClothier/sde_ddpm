@@ -1,0 +1,73 @@
+Likelihood Trajectory Analysis Summary
+========================================
+
+Digit 0:
+  Samples: 11
+  Trajectory lengths: [35, 40, 37, 40, 42, 41, 36, 37, 36, 37, 37]
+  PNG: likelihood_results/digit_0_trajectories.png
+  NPY: likelihood_results/digit_0_trajectories.npy
+  Individual: likelihood_results/digit_0_individual
+
+Digit 1:
+  Samples: 11
+  Trajectory lengths: [38, 38, 36, 37, 37, 38, 39, 38, 38, 39, 39]
+  PNG: likelihood_results/digit_1_trajectories.png
+  NPY: likelihood_results/digit_1_trajectories.npy
+  Individual: likelihood_results/digit_1_individual
+
+Digit 2:
+  Samples: 11
+  Trajectory lengths: [37, 37, 37, 37, 35, 38, 38, 37, 38, 37, 39]
+  PNG: likelihood_results/digit_2_trajectories.png
+  NPY: likelihood_results/digit_2_trajectories.npy
+  Individual: likelihood_results/digit_2_individual
+
+Digit 3:
+  Samples: 11
+  Trajectory lengths: [40, 39, 40, 37, 40, 36, 39, 37, 38, 40, 36]
+  PNG: likelihood_results/digit_3_trajectories.png
+  NPY: likelihood_results/digit_3_trajectories.npy
+  Individual: likelihood_results/digit_3_individual
+
+Digit 4:
+  Samples: 11
+  Trajectory lengths: [38, 39, 41, 37, 38, 36, 37, 39, 37, 37, 36]
+  PNG: likelihood_results/digit_4_trajectories.png
+  NPY: likelihood_results/digit_4_trajectories.npy
+  Individual: likelihood_results/digit_4_individual
+
+Digit 5:
+  Samples: 11
+  Trajectory lengths: [39, 37, 37, 38, 38, 38, 37, 38, 38, 39, 37]
+  PNG: likelihood_results/digit_5_trajectories.png
+  NPY: likelihood_results/digit_5_trajectories.npy
+  Individual: likelihood_results/digit_5_individual
+
+Digit 6:
+  Samples: 11
+  Trajectory lengths: [38, 39, 37, 35, 37, 38, 41, 37, 41, 38, 38]
+  PNG: likelihood_results/digit_6_trajectories.png
+  NPY: likelihood_results/digit_6_trajectories.npy
+  Individual: likelihood_results/digit_6_individual
+
+Digit 7:
+  Samples: 11
+  Trajectory lengths: [40, 38, 35, 38, 36, 38, 39, 39, 38, 39, 38]
+  PNG: likelihood_results/digit_7_trajectories.png
+  NPY: likelihood_results/digit_7_trajectories.npy
+  Individual: likelihood_results/digit_7_individual
+
+Digit 8:
+  Samples: 11
+  Trajectory lengths: [37, 36, 37, 38, 36, 38, 37, 40, 37, 38, 37]
+  PNG: likelihood_results/digit_8_trajectories.png
+  NPY: likelihood_results/digit_8_trajectories.npy
+  Individual: likelihood_results/digit_8_individual
+
+Digit 9:
+  Samples: 11
+  Trajectory lengths: [38, 37, 37, 40, 38, 39, 37, 39, 39, 39, 38]
+  PNG: likelihood_results/digit_9_trajectories.png
+  NPY: likelihood_results/digit_9_trajectories.npy
+  Individual: likelihood_results/digit_9_individual
+

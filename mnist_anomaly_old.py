@@ -1,67 +1,14 @@
+import numpy as np
 import torch
+import torch.nn as nn
+import torch.optim as optim
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset, DataLoader, TensorDataset
 import torchvision
 import torchvision.transforms as transforms
-from torchvision.datasets import CIFAR10, MNIST
-import numpy as np
-
-class SingleDigitMNIST(Dataset):
-    """Custom Dataset class for single digit MNIST"""
-    
-    def __init__(self, root='./data', train=True, target_digit=8, transform=None):
-        """
-        Create a MNIST dataset containing only samples of a specific digit.
-        
-        Parameters:
-        - root: Root directory for dataset
-        - train: Whether to use training or test set
-        - target_digit: The specific digit to include (0-9)
-        - transform: PyTorch transforms to apply
-        """
-        
-        self.target_digit = target_digit
-        self.transform = transform
-        
-        # Load original MNIST dataset
-        original_dataset = MNIST(root=root, train=train, download=True, transform=None)
-        
-        # Extract data and labels
-        if hasattr(original_dataset, 'data'):
-            data = original_dataset.data.numpy()
-            targets = original_dataset.targets.numpy()
-        else:
-            # Handle different PyTorch versions
-            data = original_dataset.train_data.numpy() if train else original_dataset.test_data.numpy()
-            targets = original_dataset.train_labels.numpy() if train else original_dataset.test_labels.numpy()
-        
-        # Filter for specific digit
-        digit_indices = np.where(targets == target_digit)[0]
-        self.data = data[digit_indices]
-        self.targets = targets[digit_indices]
-        
-        print(f"{'Training' if train else 'Test'} set created with {len(self.data)} samples of digit {target_digit}")
-        
-        # Store class names for compatibility
-        self.classes = [str(i) for i in range(10)]
-    
-    def __len__(self):
-        return len(self.data)
-    
-    def __getitem__(self, idx):
-        sample = self.data[idx]
-        target = self.targets[idx]
-        
-        # Convert to PIL Image if transform expects it
-        if self.transform:
-            sample = transforms.ToPILImage()(sample)
-            sample = self.transform(sample)
-        else:
-            # Convert to tensor and normalize
-            sample = torch.from_numpy(sample).float() / 255.0
-            sample = sample.unsqueeze(0)  # Add channel dimension
-        
-        return sample, target
+from torchvision.datasets import MNIST, CIFAR10
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_auc_score
 
 class AnomalousMNIST(Dataset):
     """Custom Dataset class for anomalous MNIST"""
@@ -156,7 +103,6 @@ class AnomalousMNIST(Dataset):
         
         return sample, target
 
-
 def get_dataset(config, uniform_dequantization=False, evaluation=False):
     """Create data loaders for training and evaluation.
 
@@ -166,8 +112,8 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
             - eval.batch_size: batch size for evaluation  
             - data.image_size or image_size: target image size
             - data.random_flip or random_flip: whether to apply random horizontal flip
-            - data.dataset or dataset: dataset name ('CIFAR10', 'MNIST', 'ANOMALOUS_MNIST', 'SINGLE_DIGIT_MNIST')
-            - data.target_digit: digit to make anomalous or specific digit to include
+            - data.dataset or dataset: dataset name ('CIFAR10', 'MNIST', or 'ANOMALOUS_MNIST')
+            - data.target_digit: digit to make anomalous (for ANOMALOUS_MNIST)
             - data.removal_percentage: percentage of target digit to remove (for ANOMALOUS_MNIST)
             - data.random_state: random seed for anomaly creation
         uniform_dequantization: If True, add uniform dequantization to images.
@@ -210,7 +156,7 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
     else:
         random_flip = config.get('data.random_flip', config.get('random_flip', True))
 
-    # Get dataset-specific parameters
+    # Get anomaly-specific parameters
     if hasattr(config, 'data') and hasattr(config.data, 'target_digit'):
         target_digit = config.data.target_digit
     else:
@@ -229,7 +175,7 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
     # Create transforms based on dataset
     transform_list = []
     
-    if dataset_name in ['MNIST', 'ANOMALOUS_MNIST', 'SINGLE_DIGIT_MNIST']:
+    if dataset_name in ['MNIST', 'ANOMALOUS_MNIST']:
         # MNIST-specific transforms
         # Resize for U-Net
         transform_list.append(transforms.Resize((32, 32)))
@@ -250,7 +196,7 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
         transform_list.append(transforms.ToTensor())
     
     else:
-        raise ValueError(f"Unsupported dataset: {dataset_name}. Supported: 'CIFAR10', 'MNIST', 'ANOMALOUS_MNIST', 'SINGLE_DIGIT_MNIST'")
+        raise ValueError(f"Unsupported dataset: {dataset_name}. Supported: 'CIFAR10', 'MNIST', 'ANOMALOUS_MNIST'")
     
     # Random flip for training (apply to both datasets)
     train_transform_list = transform_list.copy()
@@ -329,24 +275,6 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
         
         num_classes = 10
         class_names = train_dataset.classes
-        
-    elif dataset_name == 'SINGLE_DIGIT_MNIST':
-        train_dataset = SingleDigitMNIST(
-            root='./data', 
-            train=True, 
-            target_digit=target_digit,
-            transform=train_transform
-        )
-        
-        eval_dataset = SingleDigitMNIST(
-            root='./data', 
-            train=False, 
-            target_digit=target_digit,
-            transform=eval_transform
-        )
-        
-        num_classes = 10
-        class_names = train_dataset.classes
 
     # Create data loaders
     train_loader = DataLoader(
@@ -377,7 +305,7 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
         'class_names': class_names
     }
     
-    # Add dataset-specific info
+    # Add anomaly-specific info
     if dataset_name == 'ANOMALOUS_MNIST':
         anomaly_train_count = np.sum(train_dataset.targets == target_digit)
         anomaly_test_count = np.sum(eval_dataset.targets == target_digit)
@@ -389,20 +317,240 @@ def get_dataset(config, uniform_dequantization=False, evaluation=False):
             'normal_train_count': len(train_dataset) - anomaly_train_count,
             'normal_test_count': len(eval_dataset) - anomaly_test_count
         })
-    elif dataset_name == 'SINGLE_DIGIT_MNIST':
-        dataset_info.update({
-            'target_digit': target_digit,
-            'digit_train_count': len(train_dataset),
-            'digit_test_count': len(eval_dataset)
-        })
 
     return train_loader, eval_loader, dataset_info
+def create_anomaly_dataloaders(root='./data', target_digit=8, removal_percentage=0.98, 
+                              batch_size=64, random_state=42):
+    """
+    Create DataLoaders for anomaly detection with separate normal and anomalous samples.
+    
+    Returns:
+    - Dictionary with separate DataLoaders for normal and anomalous samples
+    """
+    
+    # Define transforms
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
+    ])
+    
+    # Create modified datasets
+    train_dataset = AnomalousMNIST(root=root, train=True, target_digit=target_digit, 
+                                  removal_percentage=removal_percentage, 
+                                  transform=None, random_state=random_state)
+    
+    test_dataset = AnomalousMNIST(root=root, train=False, target_digit=target_digit, 
+                                 removal_percentage=removal_percentage, 
+                                 transform=None, random_state=random_state)
+    
+    # Separate normal and anomalous samples
+    def separate_normal_anomalous(dataset):
+        normal_data = []
+        normal_targets = []
+        anomaly_data = []
+        anomaly_targets = []
+        
+        for i in range(len(dataset)):
+            sample, target = dataset[i]
+            if target == target_digit:
+                anomaly_data.append(sample)
+                anomaly_targets.append(target)
+            else:
+                normal_data.append(sample)
+                normal_targets.append(target)
+        
+        if normal_data:
+            normal_data = torch.stack(normal_data)
+            normal_targets = torch.tensor(normal_targets)
+        else:
+            normal_data = torch.empty(0, 1, 28, 28)
+            normal_targets = torch.empty(0, dtype=torch.long)
+            
+        if anomaly_data:
+            anomaly_data = torch.stack(anomaly_data)
+            anomaly_targets = torch.tensor(anomaly_targets)
+        else:
+            anomaly_data = torch.empty(0, 1, 28, 28)
+            anomaly_targets = torch.empty(0, dtype=torch.long)
+        
+        return (normal_data, normal_targets), (anomaly_data, anomaly_targets)
+    
+    # Separate training data
+    (train_normal_data, train_normal_targets), (train_anomaly_data, train_anomaly_targets) = separate_normal_anomalous(train_dataset)
+    
+    # Separate test data
+    (test_normal_data, test_normal_targets), (test_anomaly_data, test_anomaly_targets) = separate_normal_anomalous(test_dataset)
+    
+    # Create DataLoaders
+    dataloaders = {
+        'train_normal': DataLoader(TensorDataset(train_normal_data, train_normal_targets), 
+                                  batch_size=batch_size, shuffle=True),
+        'train_anomaly': DataLoader(TensorDataset(train_anomaly_data, train_anomaly_targets), 
+                                   batch_size=batch_size, shuffle=True),
+        'test_normal': DataLoader(TensorDataset(test_normal_data, test_normal_targets), 
+                                 batch_size=batch_size, shuffle=False),
+        'test_anomaly': DataLoader(TensorDataset(test_anomaly_data, test_anomaly_targets), 
+                                  batch_size=batch_size, shuffle=False)
+    }
+    
+    # Print dataset statistics
+    print(f"\nDataset Statistics:")
+    print(f"Training normal samples: {len(train_normal_data)}")
+    print(f"Training anomalous samples: {len(train_anomaly_data)}")
+    print(f"Test normal samples: {len(test_normal_data)}")
+    print(f"Test anomalous samples: {len(test_anomaly_data)}")
+    
+    return dataloaders
 
+class SimpleAutoencoder(nn.Module):
+    """Simple autoencoder for anomaly detection"""
+    
+    def __init__(self, input_dim=784, hidden_dims=[128, 64, 32]):
+        super(SimpleAutoencoder, self).__init__()
+        
+        # Encoder
+        encoder_layers = []
+        prev_dim = input_dim
+        for hidden_dim in hidden_dims:
+            encoder_layers.extend([
+                nn.Linear(prev_dim, hidden_dim),
+                nn.ReLU()
+            ])
+            prev_dim = hidden_dim
+        
+        # Decoder
+        decoder_layers = []
+        for hidden_dim in reversed(hidden_dims[:-1]):
+            decoder_layers.extend([
+                nn.Linear(prev_dim, hidden_dim),
+                nn.ReLU()
+            ])
+            prev_dim = hidden_dim
+        
+        decoder_layers.extend([
+            nn.Linear(prev_dim, input_dim),
+            nn.Sigmoid()
+        ])
+        
+        self.encoder = nn.Sequential(*encoder_layers)
+        self.decoder = nn.Sequential(*decoder_layers)
+    
+    def forward(self, x):
+        # Flatten input
+        x = x.view(x.size(0), -1)
+        # Encode
+        encoded = self.encoder(x)
+        # Decode
+        decoded = self.decoder(encoded)
+        # Reshape to original dimensions
+        decoded = decoded.view(x.size(0), 1, 28, 28)
+        return decoded
 
-# Example usage with your config structure
+def train_autoencoder(model, train_loader, num_epochs=50, learning_rate=0.001):
+    """Train the autoencoder on normal samples only"""
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
+    
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    
+    model.train()
+    for epoch in range(num_epochs):
+        total_loss = 0
+        num_batches = 0
+        
+        for batch_idx, (data, _) in enumerate(train_loader):
+            data = data.to(device)
+            
+            optimizer.zero_grad()
+            reconstructed = model(data)
+            loss = criterion(reconstructed, data)
+            loss.backward()
+            optimizer.step()
+            
+            total_loss += loss.item()
+            num_batches += 1
+        
+        avg_loss = total_loss / num_batches
+        if (epoch + 1) % 10 == 0:
+            print(f'Epoch [{epoch+1}/{num_epochs}], Average Loss: {avg_loss:.4f}')
+    
+    return model
+
+def evaluate_anomaly_detection(model, normal_loader, anomaly_loader):
+    """Evaluate anomaly detection performance"""
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
+    model.eval()
+    
+    def calculate_reconstruction_errors(dataloader):
+        errors = []
+        with torch.no_grad():
+            for data, _ in dataloader:
+                data = data.to(device)
+                reconstructed = model(data)
+                # Calculate MSE for each sample
+                mse = torch.mean((data - reconstructed) ** 2, dim=(1, 2, 3))
+                errors.extend(mse.cpu().numpy())
+        return np.array(errors)
+    
+    # Calculate reconstruction errors
+    normal_errors = calculate_reconstruction_errors(normal_loader)
+    anomaly_errors = calculate_reconstruction_errors(anomaly_loader)
+    
+    print(f"\nReconstruction Error Statistics:")
+    print(f"Normal samples - Mean: {np.mean(normal_errors):.4f}, Std: {np.std(normal_errors):.4f}")
+    print(f"Anomalous samples - Mean: {np.mean(anomaly_errors):.4f}, Std: {np.std(anomaly_errors):.4f}")
+    
+    # Calculate AUC score
+    if len(anomaly_errors) > 0:
+        y_true = np.concatenate([np.zeros(len(normal_errors)), np.ones(len(anomaly_errors))])
+        y_scores = np.concatenate([normal_errors, anomaly_errors])
+        auc_score = roc_auc_score(y_true, y_scores)
+        print(f"AUC Score: {auc_score:.4f}")
+    
+    # Plot reconstruction errors
+    plt.figure(figsize=(10, 6))
+    plt.hist(normal_errors, bins=50, alpha=0.7, label='Normal (non-8)', density=True)
+    if len(anomaly_errors) > 0:
+        plt.hist(anomaly_errors, bins=50, alpha=0.7, label='Anomalous (8)', density=True)
+    plt.xlabel('Reconstruction Error')
+    plt.ylabel('Density')
+    plt.title('Reconstruction Error Distribution')
+    plt.legend()
+    plt.show()
+    
+    return normal_errors, anomaly_errors
+
+def visualize_samples(dataloader, num_samples=5, title="Samples"):
+    """Visualize samples from a dataloader"""
+    
+    data_iter = iter(dataloader)
+    images, labels = next(data_iter)
+    
+    fig, axes = plt.subplots(1, min(num_samples, len(images)), figsize=(15, 3))
+    if num_samples == 1:
+        axes = [axes]
+    
+    for i in range(min(num_samples, len(images))):
+        img = images[i].squeeze()
+        axes[i].imshow(img, cmap='gray')
+        axes[i].set_title(f'Label: {labels[i].item()}')
+        axes[i].axis('off')
+    
+    plt.suptitle(title)
+    plt.tight_layout()
+    plt.show()
+
+# Example usage
 if __name__ == "__main__":
-    # CIFAR-10 config
-    cifar_config = {
+    # Example 1: Using the integrated get_dataset function
+    print("=== Example 1: Using integrated get_dataset() ===")
+    
+    # Config for anomalous MNIST
+    anomaly_config = {
         'beta_min': 0.1,
         'beta_max': 20.0,
         'timesteps': 1000,
@@ -418,59 +566,20 @@ if __name__ == "__main__":
         # Dataset specific keys:
         'training.batch_size': 128,
         'eval.batch_size': 256,
-        'data.dataset': 'CIFAR10',  # or 'MNIST'
+        'data.dataset': 'ANOMALOUS_MNIST',  # Use anomalous MNIST
         'data.image_size': 32,
-        'data.random_flip': True
+        'data.random_flip': False,
+        'data.target_digit': 8,  # Make digit 8 anomalous
+        'data.removal_percentage': 0.98,  # Remove 98% of digit 8
+        'data.random_state': 42
     }
     
-    # MNIST config
-    mnist_config = {
-        'beta_min': 0.1,
-        'beta_max': 20.0,
-        'timesteps': 1000,
-        'lr': 2e-4,
-        'warmup': 5000,
-        'batch_size': 128,
-        'epochs': 100,
-        'log_freq': 100,
-        'num_workers': 2,
-        'use_ema': True,
-        'ODE': True,
-        'dequant': True,
-        # Dataset specific keys:
-        'training.batch_size': 128,
-        'eval.batch_size': 256,
-        'data.dataset': 'MNIST',
-        'data.image_size': 28,  # MNIST native size, or 32 to match CIFAR-10
-        'data.random_flip': False  # Usually False for MNIST
-    }
-    
-    # Single digit config
-    single_digit_config = {
-        'beta_min': 0.1,
-        'beta_max': 20.0,
-        'timesteps': 1000,
-        'lr': 2e-4,
-        'warmup': 5000,
-        'batch_size': 128,
-        'epochs': 100,
-        'log_freq': 100,
-        'num_workers': 2,
-        'use_ema': True,
-        'ODE': True,
-        'dequant': True,
-        # Dataset specific keys:
-        'training.batch_size': 128,
-        'eval.batch_size': 256,
-        'data.dataset': 'SINGLE_DIGIT_MNIST',
-        'data.target_digit': 8,  # Only digit 8
-        'data.image_size': 32,
-        'data.random_flip': False
-    }
-    
-    # Test SINGLE_DIGIT_MNIST
-    print("=== SINGLE_DIGIT_MNIST ===")
-    train_loader, eval_loader, dataset_info = get_dataset(single_digit_config, uniform_dequantization=single_digit_config['dequant'], evaluation=False)
+    # Create dataloaders using your existing framework
+    train_loader, eval_loader, dataset_info = get_dataset(
+        anomaly_config, 
+        uniform_dequantization=anomaly_config['dequant'], 
+        evaluation=False
+    )
     
     print(f"Dataset info: {dataset_info}")
     print(f"Training batches: {len(train_loader)}")
@@ -478,7 +587,82 @@ if __name__ == "__main__":
     
     # Test loading a batch
     for batch_idx, (images, labels) in enumerate(train_loader):
-        print(f"Single Digit Batch {batch_idx}: images shape {images.shape}, labels shape {labels.shape}")
+        print(f"Batch {batch_idx}: images shape {images.shape}, labels shape {labels.shape}")
         print(f"Image range: [{images.min():.3f}, {images.max():.3f}]")
-        print(f"All labels are {single_digit_config['data.target_digit']}: {torch.all(labels == single_digit_config['data.target_digit']).item()}")
+        print(f"Sample labels: {labels[:10].tolist()}")
+        print(f"Count of target digit {anomaly_config['data.target_digit']}: {torch.sum(labels == anomaly_config['data.target_digit']).item()}")
         break
+    
+    print("\n" + "="*60)
+    
+    # Example 2: Using the original separate dataloaders for more detailed analysis
+    print("=== Example 2: Using separate normal/anomaly dataloaders ===")
+    
+    # Create anomalous MNIST dataloaders
+    dataloaders = create_anomaly_dataloaders(
+        target_digit=8, 
+        removal_percentage=0.98,
+        batch_size=64,
+        random_state=42
+    )
+    
+    # Visualize some samples
+    print("Visualizing normal samples:")
+    visualize_samples(dataloaders['train_normal'], num_samples=5, title="Normal Training Samples")
+    
+    if len(dataloaders['train_anomaly'].dataset) > 0:
+        print("Visualizing anomalous samples:")
+        visualize_samples(dataloaders['train_anomaly'], num_samples=5, title="Anomalous Training Samples")
+    
+    # Example 3: For your diffusion model training
+    print("\n=== Example 3: Config for your diffusion model ===")
+    
+    # This is how you would modify your train.py config
+    diffusion_config = {
+        'beta_min': 0.1,
+        'beta_max': 20.0,
+        'timesteps': 1000,
+        'lr': 8e-5,
+        'warmup': 5000,
+        'batch_size': 256,
+        'epochs': 200,
+        'log_freq': 100,
+        'num_workers': 2,
+        'use_ema': True,
+        'ODE': False,
+        'dequant': False,
+        'data.dataset': 'ANOMALOUS_MNIST',  # Changed from 'MNIST'
+        'data.target_digit': 8,
+        'data.removal_percentage': 0.98,
+        'data.random_state': 42,
+        'uniform_dequantization': False
+    }
+    
+    print("To use in your training script, simply change config['data.dataset'] to 'ANOMALOUS_MNIST'")
+    print("and add the anomaly parameters to your config.")
+    
+    # Example 4: Likelihood analysis setup
+    print("\n=== Example 4: For likelihood analysis (eval.py style) ===")
+    
+    eval_config = {
+        'beta_min': 0.1,
+        'beta_max': 20.0,
+        'timesteps': 1000,
+        'lr': 2e-4,
+        'warmup': 5000,
+        'batch_size': 128,
+        'epochs': 100,
+        'log_freq': 100,
+        'num_workers': 2,
+        'use_ema': True,
+        'ODE': True,
+        'dequant': True,
+        'eval.batch_size': 1,  # For individual likelihood computation
+        'data.dataset': 'ANOMALOUS_MNIST',
+        'data.target_digit': 8,
+        'data.removal_percentage': 0.98,
+        'data.random_state': 42
+    }
+    
+    print("For likelihood analysis, you can now evaluate likelihoods on the anomalous dataset.")
+    print("Normal samples should have higher likelihood, anomalous samples (digit 8) should have lower likelihood.")

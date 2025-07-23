@@ -6,7 +6,7 @@ import torch
 from sde import SubVPSDE, get_score_fn, EulerMaruayamaPredictor, sample_images
 from unet import Unet
 from utils import get_loaders, make_im_grid
-from datasets import get_dataset
+from mnist_anomaly import get_dataset
 
 torch.manual_seed(159753)
 np.random.seed(159753)
@@ -46,7 +46,15 @@ if __name__ == '__main__':
         'ODE' : False,
         'dequant' : False,
         'data.dataset' : 'MNIST',
-        'uniform_dequantization' : False
+        'uniform_dequantization' : False,
+        'training.batch_size': 128,
+        'eval.batch_size': 256,
+        'data.dataset': 'ANOMALOUS_MNIST',  # Use anomalous MNIST
+        'data.image_size': 32,
+        'data.random_flip': False,
+        'data.target_digit': 8,  # Make digit 8 anomalous
+        'data.removal_percentage': 0.98,  # Remove 98% of digit 8
+        'data.random_state': 42
     }
     
     device = 'cuda:0'
